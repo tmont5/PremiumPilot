@@ -13,6 +13,7 @@ import {
   getAccountNumbers,
   getAccounts,
   getTransactions,
+  mapEquityPositions,
   mapPositions,
   mapTransactions,
   refreshTokens,
@@ -85,6 +86,15 @@ Deno.serve(async () => {
             ...m,
             status: resolveStatus(m),
           }))
+        );
+      }
+
+      // Equity/ETF lots backing the income strategy (Assigned Holdings). Replace set.
+      const equity = mapEquityPositions(account);
+      await db.from("equity_holdings").delete().eq("connected_account_id", acct.id);
+      if (equity.length) {
+        await db.from("equity_holdings").insert(
+          equity.map((e) => ({ connected_account_id: acct.id, ...e }))
         );
       }
 

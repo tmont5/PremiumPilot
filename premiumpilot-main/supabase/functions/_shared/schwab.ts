@@ -176,6 +176,40 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
   return out;
 }
 
+// Map a Schwab account's long equity/ETF lots. We can't distinguish shares that
+// arrived via put assignment from shares simply bought, so every long stock lot
+// is treated as a holding backing the income strategy. Current price is derived
+// from market value; cost basis is Schwab's averagePrice.
+export interface MappedEquity {
+  ticker: string;
+  shares: number;
+  cost_basis_per_share: number;
+  current_price: number;
+}
+
+// deno-lint-ignore no-explicit-any
+export function mapEquityPositions(account: any): MappedEquity[] {
+  // deno-lint-ignore no-explicit-any
+  const positions: any[] = account?.securitiesAccount?.positions ?? [];
+  const out: MappedEquity[] = [];
+  for (const pos of positions) {
+    const inst = pos.instrument ?? {};
+    if (inst.assetType !== "EQUITY" && inst.assetType !== "COLLECTIVE_INVESTMENT") continue;
+    const ticker: string = inst.symbol ?? "";
+    const shares = Number(pos.longQuantity ?? 0);
+    if (!ticker || shares <= 0) continue;
+    const costBasis = Math.abs(Number(pos.averagePrice ?? 0));
+    const marketValue = Math.abs(Number(pos.marketValue ?? 0));
+    out.push({
+      ticker,
+      shares,
+      cost_basis_per_share: costBasis,
+      current_price: marketValue > 0 ? marketValue / shares : costBasis,
+    });
+  }
+  return out;
+}
+
 export interface MappedTransaction {
   schwab_activity_id: string;
   type: string | null;
