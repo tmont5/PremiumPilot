@@ -44,6 +44,7 @@ export async function DELETE(
     supabase.from("account_transactions").delete().eq("connected_account_id", id).eq("user_id", user.id),
     supabase.from("account_balances").delete().eq("connected_account_id", id),
     supabase.from("positions").delete().eq("connected_account_id", id),
+    supabase.from("equity_holdings").delete().eq("connected_account_id", id),
     supabase.from("premium_history").update({ connected_account_id: null }).eq("connected_account_id", id).eq("user_id", user.id),
   ];
 

@@ -13,10 +13,12 @@ import { deriveClosedOptionTrades } from "./trades";
 import type {
   AccountBalance,
   AccountTransaction,
+  AssignedHolding,
   ConnectedAccount,
   Position,
   PremiumHistoryEntry,
   Profile,
+  Trade,
 } from "./types";
 
 // True when no live Supabase project is wired up yet. In that case the app runs
@@ -87,7 +89,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
   if (transactionsResult.error && transactionsResult.error.code !== "42P01") throw transactionsResult.error;
 
   const accountIds = (accountsResult.data ?? []).map((account) => account.id);
-  const [balancesResult, positionsResult] = await Promise.all([
+  const [balancesResult, positionsResult, equityResult] = await Promise.all([
     accountIds.length
       ? supabase
           .from("account_balances")
@@ -106,14 +108,26 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
           .in("connected_account_id", accountIds)
           .order("expiration", { ascending: true })
       : Promise.resolve({ data: [], error: null }),
+    accountIds.length
+      ? supabase
+          .from("equity_holdings")
+          .select("id, connected_account_id, ticker, shares, cost_basis_per_share, current_price, synced_at")
+          .in("connected_account_id", accountIds)
+          .order("synced_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (balancesResult.error) throw balancesResult.error;
   if (positionsResult.error) throw positionsResult.error;
+  // equity_holdings may not exist yet if the migration hasn't been applied.
+  if (equityResult.error && equityResult.error.code !== "42P01") throw equityResult.error;
 
   const transactions = ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(
     normalizeTransaction
   );
+  // Closed option trades (and the realized income the Income page rolls up) are
+  // reconstructed from the synced transactions.
+  const trades = deriveClosedOptionTrades(transactions);
 
   return buildPortfolio({
     profile: normalizeProfile(profileResult.data, user.id),
@@ -122,13 +136,33 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
     positions: (positionsResult.data ?? []).map(normalizePosition),
     premiumHistory: (premiumResult.data ?? []).map(normalizePremium),
     transactions,
-    // Closed option trades (and the realized income the Income page rolls up) are
-    // reconstructed from the synced transactions. Assigned-stock holdings need
-    // equity cost-basis data the sync doesn't pull yet (follow-up), so live mode
-    // shows none for now.
-    trades: deriveClosedOptionTrades(transactions),
-    assignedHoldings: [],
+    trades,
+    assignedHoldings: buildAssignedHoldings((equityResult.data ?? []) as Record<string, unknown>[], trades),
   });
+}
+
+// Turns synced equity lots into Assigned Holdings. premium_credit is the net
+// realized option premium for the underlying (from closed trades), which lowers
+// the effective breakeven. This attributes all of the underlying's option income
+// to the lot — an approximation, since assigned vs. bought shares are
+// indistinguishable in Schwab's data.
+function buildAssignedHoldings(rows: Record<string, unknown>[], trades: Trade[]): AssignedHolding[] {
+  const creditByTicker = new Map<string, number>();
+  for (const t of trades) {
+    creditByTicker.set(t.ticker, (creditByTicker.get(t.ticker) ?? 0) + t.realized_pnl);
+  }
+  return rows
+    .map((row) => ({
+      id: String(row.id),
+      connected_account_id: String(row.connected_account_id),
+      ticker: String(row.ticker),
+      shares: number(row.shares),
+      cost_basis_per_share: number(row.cost_basis_per_share),
+      premium_credit: Math.max(0, creditByTicker.get(String(row.ticker)) ?? 0),
+      acquired_at: String(row.synced_at),
+      current_price: number(row.current_price),
+    }))
+    .filter((h) => h.shares > 0);
 }
 
 function normalizeProfile(profile: Partial<Profile> | null, userId: string): Profile {
