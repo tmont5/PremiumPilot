@@ -119,8 +119,13 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
 
   if (balancesResult.error) throw balancesResult.error;
   if (positionsResult.error) throw positionsResult.error;
-  // equity_holdings may not exist yet if the migration hasn't been applied.
-  if (equityResult.error && equityResult.error.code !== "42P01") throw equityResult.error;
+  // Assigned Holdings is an optional enhancement; the equity_holdings table may
+  // not be provisioned yet (missing-table errors vary: 42P01 / PGRST205). Never
+  // let it fail the whole portfolio load — just skip the holdings.
+  if (equityResult.error) {
+    console.warn("equity_holdings unavailable; skipping assigned holdings:", equityResult.error.message);
+  }
+  const equityRows = (equityResult.error ? [] : equityResult.data ?? []) as Record<string, unknown>[];
 
   const transactions = ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(
     normalizeTransaction
@@ -137,7 +142,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
     premiumHistory: (premiumResult.data ?? []).map(normalizePremium),
     transactions,
     trades,
-    assignedHoldings: buildAssignedHoldings((equityResult.data ?? []) as Record<string, unknown>[], trades),
+    assignedHoldings: buildAssignedHoldings(equityRows, trades),
   });
 }
 
