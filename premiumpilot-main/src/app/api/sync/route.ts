@@ -18,5 +18,8 @@ export async function POST() {
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 502 });
 
+  // Surface the per-account sync result (position counts, any insert error) in
+  // the server logs for diagnostics.
+  console.log("[api/sync] result", JSON.stringify(data));
   return NextResponse.json({ ok: true, result: data });
 }
