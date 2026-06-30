@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import type { EnrichedPosition, PositionStatus } from "@/lib/types";
 import {
+  fmtCurrency,
   fmtCurrency0,
   fmtDate,
   fmtPct,
@@ -18,6 +19,11 @@ import {
   fmtSignedPctFromFraction,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+// Covered calls reserve no cash — the backing shares are tracked separately in
+// Assigned Holdings — so their capital requirement is shown as $0 here.
+const capitalRequired = (p: EnrichedPosition) =>
+  p.strategy === "covered_call" ? 0 : p.capital_requirement;
 
 // "Short Put" rather than "CSP": these are sold puts, but not all are cash-secured
 // (e.g. margin/naked), so the label avoids implying a cash-secured structure.
@@ -42,12 +48,13 @@ function action(status: PositionStatus): { label: string; show: boolean } {
 
 export function PositionsTable({ positions }: { positions: EnrichedPosition[] }) {
   const totalPremium = positions.reduce((sum, p) => sum + p.premium_collected, 0);
-  const totalCapital = positions.reduce((sum, p) => sum + p.capital_requirement, 0);
+  const totalCapital = positions.reduce((sum, p) => sum + capitalRequired(p), 0);
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Ticker</TableHead>
+          <TableHead className="text-right">Stock Price</TableHead>
           <TableHead>Strategy</TableHead>
           <TableHead className="text-right">Strike</TableHead>
           <TableHead>Expiration</TableHead>
@@ -71,6 +78,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
           return (
             <TableRow key={p.id}>
               <TableCell className="font-semibold">{p.ticker}</TableCell>
+              <TableCell className="text-right tabular-nums">{fmtCurrency(p.current_underlying_price)}</TableCell>
               <TableCell className="text-muted-foreground">{STRATEGY_LABEL[p.strategy]}</TableCell>
               <TableCell className="text-right tabular-nums">${p.strike}</TableCell>
               <TableCell className="text-muted-foreground">{fmtDate(p.expiration)}</TableCell>
@@ -98,7 +106,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
               >
                 {fmtSignedPctFromFraction(m.distanceFromStrikePct)}
               </TableCell>
-              <TableCell className="text-right tabular-nums">{fmtCurrency0(p.capital_requirement)}</TableCell>
+              <TableCell className="text-right tabular-nums">{fmtCurrency0(capitalRequired(p))}</TableCell>
               <TableCell>
                 <StatusBadge status={m.status} />
               </TableCell>
@@ -118,7 +126,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
       {positions.length > 0 && (
         <TableFooter>
           <TableRow>
-            <TableCell colSpan={5}>Total</TableCell>
+            <TableCell colSpan={6}>Total</TableCell>
             <TableCell className="text-right tabular-nums">{fmtCurrency0(totalPremium)}</TableCell>
             <TableCell colSpan={6} />
             <TableCell className="text-right tabular-nums">{fmtCurrency0(totalCapital)}</TableCell>
