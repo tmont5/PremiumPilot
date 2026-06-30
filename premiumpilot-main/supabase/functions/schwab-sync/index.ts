@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
   const { data: accounts, error } = await accountsQuery;
   if (error) return json({ error: error.message }, 500);
 
-  const results: Record<string, string> = {};
+  const results: Record<string, unknown> = {};
 
   for (const acct of accounts ?? []) {
     try {
@@ -100,16 +100,25 @@ Deno.serve(async (req) => {
       const deltas = buildDeltaMap(quotes);
 
       // Positions: map (with live prices + greeks), compute status, replace set.
+      // Only wipe the existing set when we have replacements, and surface any
+      // insert error instead of silently leaving the table empty.
       const mapped = mapPositions(account, prices, deltas);
-      await db.from("positions").delete().eq("connected_account_id", acct.id);
+      let posError: string | null = null;
       if (mapped.length) {
-        await db.from("positions").insert(
+        await db.from("positions").delete().eq("connected_account_id", acct.id);
+        const insert = await db.from("positions").insert(
           mapped.map((m) => ({
             connected_account_id: acct.id,
             ...m,
             status: resolveStatus(m),
           }))
         );
+        if (insert.error) {
+          posError = insert.error.message;
+          console.error("positions insert failed", acct.id, insert.error);
+        }
+      } else {
+        console.warn("no option positions mapped; preserving existing set", acct.id);
       }
 
       // Equity/ETF lots backing the income strategy (Assigned Holdings). Replace
@@ -141,11 +150,17 @@ Deno.serve(async (req) => {
       }
 
       await db.from("connected_accounts").update({ last_synced_at: new Date().toISOString() }).eq("id", acct.id);
-      results[acct.id] = "ok";
+      results[acct.id] = {
+        state: posError ? "positions_error" : "ok",
+        optionPositions: mapped.length,
+        quotes: Object.keys(quotes).length,
+        deltas: Object.keys(deltas).length,
+        posError,
+      };
     } catch (e) {
       console.error("sync failed", acct.id, e);
       await db.from("connected_accounts").update({ needs_reauth: true }).eq("id", acct.id);
-      results[acct.id] = "needs_reauth";
+      results[acct.id] = { state: "needs_reauth", error: String(e) };
     }
   }
 
